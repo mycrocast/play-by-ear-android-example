@@ -9,14 +9,14 @@ plugins {
 
 android {
     namespace = "de.mycrocast.android.play_by_ear_example"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "de.mycrocast.android.play_by_ear_example"
         minSdk = 23
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
