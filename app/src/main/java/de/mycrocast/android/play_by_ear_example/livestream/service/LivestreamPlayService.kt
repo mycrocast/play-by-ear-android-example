@@ -317,7 +317,7 @@ class LivestreamPlayService : Service() {
         startForeground(LIVESTREAM_NOTIFICATION_ID, notification)
 
         // create livestream player
-        player = playerFactory.create(this)
+        player = playerFactory.create(this.application)
 
         // collect updates for the specific livestream
         observeLivestream = ioScope.launch {
