@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import androidx.core.app.NotificationCompat
+import de.mycrocast.android.play_by_ear.sdk.core.domain.PlayByEarSpot
 import de.mycrocast.android.play_by_ear_example.R
 
 /**
@@ -69,6 +70,17 @@ class LivestreamNotificationBuilder(
     fun createStreamerConnectionLostNotification(): Notification {
         builder.setContentTitle("Streamer lost connection")
         builder.setContentText("Waiting for streamer to reconnect.")
+        return builder.build()
+    }
+
+    /**
+     * Creates a basic notification for a currently playing spot, displaying the name of the spot.
+     */
+    fun createSpotNotification(
+        spot: PlayByEarSpot
+    ): Notification {
+        builder.setContentTitle("Current playing spot")
+        builder.setContentText(spot.name)
         return builder.build()
     }
 }

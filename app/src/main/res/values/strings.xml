@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">PlayByEar Example</string>
+    <string name="app_name">PlayByEar</string>
+    <string name="i18n_playing_spot">Playing Spot</string>
 </resources>

@@ -2,7 +2,9 @@ package de.mycrocast.android.play_by_ear_example.di
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.Log
+import android.location.LocationManager
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -15,9 +17,15 @@ import de.mycrocast.android.play_by_ear.sdk.core.domain.PlayByEarSDKCredentials
 import de.mycrocast.android.play_by_ear.sdk.livestream.container.domain.PlayByEarLivestreamContainer
 import de.mycrocast.android.play_by_ear.sdk.livestream.loader.domain.PlayByEarLivestreamLoader
 import de.mycrocast.android.play_by_ear.sdk.livestream.player.domain.PlayByEarLivestreamPlayer
+import de.mycrocast.android.play_by_ear.sdk.location.domain.PlayByEarLocationProvider
 import de.mycrocast.android.play_by_ear.sdk.logger.PlayByEarLogger
 import de.mycrocast.android.play_by_ear_example.livestream.play_state.DefaultPlayStateContainer
 import de.mycrocast.android.play_by_ear_example.livestream.play_state.PlayStateContainer
+import de.mycrocast.android.play_by_ear_example.livestream.spot.data.DefaultSpotPlayContainer
+import de.mycrocast.android.play_by_ear_example.livestream.spot.domain.SpotPlayContainer
+import de.mycrocast.android.play_by_ear_example.sdk_implementation.CustomPlayByEarFusedLocationCallbackProvider
+import de.mycrocast.android.play_by_ear_example.sdk_implementation.CustomPlayByEarLogger
+import de.mycrocast.android.play_by_ear_example.sdk_implementation.CustomPlayByEarSDKCredentials
 import javax.inject.Singleton
 
 /**
@@ -41,27 +49,31 @@ class ApplicationModule {
     @Provides
     @Singleton
     fun provideSDKCredentials(): PlayByEarSDKCredentials {
-        return object : PlayByEarSDKCredentials {
-            override val token: String = "1567504890375_8741a554-c25e-428f-a807-a69bac373315-9999"
-        }
+        return CustomPlayByEarSDKCredentials()
     }
 
     @Provides
     @Singleton
     fun provideSDKLogger() : PlayByEarLogger {
-        return object : PlayByEarLogger {
-            override fun info(tag: String, message: String) {
-                Log.i(tag, message)
-            }
+        return CustomPlayByEarLogger()
+    }
 
-            override fun warning(tag: String, message: String) {
-                Log.w(tag, message)
-            }
+    @Provides
+    @Singleton
+    fun provideLocationManager(
+        @ApplicationContext context: Context
+    ) : LocationManager {
+        return context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    }
 
-            override fun error(tag: String, message: String, throwable: Throwable) {
-                Log.e(tag, message + ": ${throwable.message}")
-            }
-        }
+    @Provides
+    @Singleton
+    fun provideLocationProvider(
+        @ApplicationContext context: Context
+    ) : PlayByEarLocationProvider {
+        val executor = ContextCompat.getMainExecutor(context)
+        val client = LocationServices.getFusedLocationProviderClient(context)
+        return CustomPlayByEarFusedLocationCallbackProvider(context, client, executor)
     }
 
     @Provides
@@ -69,9 +81,10 @@ class ApplicationModule {
     fun provideSDK(
         preferences: SharedPreferences,
         credentials: PlayByEarSDKCredentials,
-        logger: PlayByEarLogger
+        logger: PlayByEarLogger,
+        locationProvider: PlayByEarLocationProvider
     ): PlayByEarSDK {
-        return PlayByEarSDKBuilder(credentials, preferences, logger).build()
+        return PlayByEarSDKBuilder(credentials, preferences, logger, locationProvider).build()
     }
 
     @Provides
@@ -110,5 +123,11 @@ class ApplicationModule {
     @Singleton
     fun providePlayStateContainer(): PlayStateContainer {
         return DefaultPlayStateContainer()
+    }
+
+    @Provides
+    @Singleton
+    fun provideSpotPlayContainer(): SpotPlayContainer {
+        return DefaultSpotPlayContainer()
     }
 }

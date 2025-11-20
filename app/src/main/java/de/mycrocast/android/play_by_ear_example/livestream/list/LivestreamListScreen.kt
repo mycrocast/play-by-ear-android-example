@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import de.mycrocast.android.play_by_ear_example.livestream.spot.presentation.SpotPlayingScreen
 
 /**
  * Screen displaying all currently active PlayByEarLivestream as well as their current play state.
@@ -32,14 +33,26 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 fun LivestreamListScreen(
     viewModel: LivestreamListViewModel = hiltViewModel()
 ) {
+    val state = rememberPullToRefreshState()
+
     // current UIState, given by ViewModel
     val uiState by viewModel.uiState.collectAsState()
     val isLoading = uiState.isLoading
     val isRefreshing = uiState.isRefreshing
     val livestreams = uiState.livestreams
     val playState = uiState.playState
+    val currentPlayingSpot = uiState.currentPlayingSpot
+    val currentSpotPlayTime = uiState.currentSpotPlayTime
 
-    val state = rememberPullToRefreshState()
+    // if spot is currently playing show fullscreen spot playing screen
+    if (currentPlayingSpot != null) {
+        SpotPlayingScreen(
+            spot = currentPlayingSpot,
+            playTime = currentSpotPlayTime,
+            modifier = Modifier.fillMaxSize()
+        )
+        return
+    }
 
     // show an initial loading animation in the center and nothing else if initial loading
     if (isLoading) {

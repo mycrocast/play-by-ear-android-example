@@ -17,6 +17,8 @@ import de.mycrocast.android.play_by_ear_example.connection.ConnectingScreen
 import de.mycrocast.android.play_by_ear_example.connection.ConnectionFailedScreen
 import de.mycrocast.android.play_by_ear_example.connection.DisconnectedScreen
 import de.mycrocast.android.play_by_ear_example.livestream.list.LivestreamListScreen
+import de.mycrocast.android.play_by_ear_example.location.permission.LocationPermissionRequestScreen
+import de.mycrocast.android.play_by_ear_example.location.provider.LocationProviderRequestScreen
 import de.mycrocast.android.play_by_ear_example.ui.theme.PlayByEarExampleTheme
 
 /**
@@ -54,6 +56,8 @@ fun MainScreen(viewModel: MainViewModel) {
     ) {
         screen?.let {
             when (it) {
+                MainViewModel.Screen.REQUEST_LOCATION_PERMISSION -> LocationPermissionRequestScreen { viewModel.onPermissionGranted() }
+                MainViewModel.Screen.ENABLE_LOCATION_PROVIDER -> LocationProviderRequestScreen { viewModel.onProviderEnabled() }
                 MainViewModel.Screen.CONNECTION_FAILED -> ConnectionFailedScreen()
                 MainViewModel.Screen.CONNECTING -> ConnectingScreen()
                 MainViewModel.Screen.LIVESTREAMS -> LivestreamListScreen()

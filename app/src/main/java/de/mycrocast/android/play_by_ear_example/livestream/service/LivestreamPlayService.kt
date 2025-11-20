@@ -8,40 +8,47 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.AndroidEntryPoint
+import de.mycrocast.android.play_by_ear_example.livestream.play_state.PlayStateContainer
+import de.mycrocast.android.play_by_ear_example.livestream.spot.domain.SpotPlayContainer
 import de.mycrocast.android.play_by_ear.sdk.connection.domain.PlayByEarConnection
 import de.mycrocast.android.play_by_ear.sdk.core.domain.PlayByEarLivestream
+import de.mycrocast.android.play_by_ear.sdk.core.domain.PlayByEarSpot
 import de.mycrocast.android.play_by_ear.sdk.livestream.container.domain.PlayByEarLivestreamContainer
 import de.mycrocast.android.play_by_ear.sdk.livestream.loader.domain.PlayByEarLivestreamLoader
 import de.mycrocast.android.play_by_ear.sdk.livestream.player.domain.PlayByEarLivestreamPlayer
-import de.mycrocast.android.play_by_ear_example.livestream.play_state.PlayStateContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentLinkedQueue
 import javax.inject.Inject
 
 /**
- * Foreground service used to play the audio broadcast of a specific livestream.
- * Will also:
+ * Foreground service used to play a specific livestream. Will also:
  * - create & show notifications
- * - collect updates of the specific livestream which is playing,
- * - collect updates to the connection state (of the PlayByEar backend) and tries to reestablish the connection if lost,
- * - controls & observes the player used to play the audio broadcast.
+ * - collect updates of the specific livestream which is playing
+ * - collect updates to the connection state (to the play by ear server) and tries to reestablish the connection if lost
+ * - controls & observes the player used to play the specific livestream
+ * - collects spots to play, play them via MediaPlayer and tracking them as finished playing
  */
 @AndroidEntryPoint
 class LivestreamPlayService : Service() {
 
     companion object {
         /**
-         * Used to store & restore the token of the livestream in the intent-bundle of this service.
+         * Used to store & restore identifier of the livestream in the intent-bundle of this service.
          */
         private const val LIVESTREAM_TOKEN = "livestream_token"
 
@@ -74,6 +81,11 @@ class LivestreamPlayService : Service() {
          * Identifier of notification used to display remote (streamer) side connection issue.
          */
         private const val REMOTE_CONNECTION_LOST_NOTIFICATION_ID = 3
+
+        /**
+         * Identifier of notification used to display information about currently playing spot.
+         */
+        private const val SPOT_NOTIFICATION_ID = 4
 
         /**
          * Identifier of notification channel used for backwards compatibility.
@@ -130,6 +142,9 @@ class LivestreamPlayService : Service() {
     @Inject
     lateinit var streamLoader: PlayByEarLivestreamLoader
 
+    @Inject
+    lateinit var spotPlayContainer: SpotPlayContainer
+
     private val ioScope = CoroutineScope(Job() + Dispatchers.IO)
 
     /**
@@ -138,12 +153,12 @@ class LivestreamPlayService : Service() {
     private var observeConnectionState: Job? = null
 
     /**
-     * Job which observes changes of the currently playing livestream via PlayByEarLivestreamContainer
+     * Job which observes changes of the currently playing livestream
      */
     private var observeLivestream: Job? = null
 
     /**
-     * Job which observes changes of the PlayByEarLivestreamPlayer
+     * Job which observes changes of the livestream player
      */
     private var observePlayerState: Job? = null
 
@@ -170,7 +185,7 @@ class LivestreamPlayService : Service() {
     /**
      * Used to control the playing process of the livestream.
      */
-    private lateinit var player: PlayByEarLivestreamPlayer
+    private lateinit var livestreamPlayer: PlayByEarLivestreamPlayer
 
     /**
      * Identifier of the streamer of the livestream.
@@ -186,6 +201,33 @@ class LivestreamPlayService : Service() {
      * Has streamer lost connection?
      */
     private var isStreamerConnectionLost = false
+
+    /**
+     * Used to play spots.
+     */
+    private lateinit var spotPlayer: MediaPlayer
+
+    /**
+     * Queue which holds all spots which needs to be played.
+     */
+    private val spotQueue = ConcurrentLinkedQueue<PlayByEarSpot>()
+
+    /**
+     * Job which collects spots to play.
+     */
+    private var collectSpotsToPlay: Job? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    private val updateSpotPlayTimeRunnable: Runnable = object : Runnable {
+        override fun run() {
+            if (spotPlayer.isPlaying) {
+                val currentTimeMillis = spotPlayer.currentPosition
+                spotPlayContainer.updatePlayTime(currentTimeMillis)
+                handler.postDelayed(this, 100)
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -221,7 +263,7 @@ class LivestreamPlayService : Service() {
                         )
                     }
 
-                    player.stop()
+                    livestreamPlayer.stop()
 
                     // TODO: better automatic reconnect
                     while (!connection.reconnect()) {
@@ -247,7 +289,7 @@ class LivestreamPlayService : Service() {
                         }
 
                         // stream has not ended, start playing with "refreshed" stream
-                        player.play(stream.token)
+                        livestreamPlayer.play(stream.token)
                         return@collect
                     }
 
@@ -255,6 +297,11 @@ class LivestreamPlayService : Service() {
                     onConnectionFailed()
                 }
             }
+        }
+
+        spotPlayer = MediaPlayer()
+        spotPlayer.setOnCompletionListener {
+            onSpotPlayFinished()
         }
     }
 
@@ -317,7 +364,7 @@ class LivestreamPlayService : Service() {
         startForeground(LIVESTREAM_NOTIFICATION_ID, notification)
 
         // create livestream player
-        player = playerFactory.create(this.application)
+        livestreamPlayer = playerFactory.create(this.application)
 
         // collect updates for the specific livestream
         observeLivestream = ioScope.launch {
@@ -340,9 +387,20 @@ class LivestreamPlayService : Service() {
             }
         }
 
+        collectSpotsToPlay = ioScope.launch {
+            livestreamPlayer.spots.collect { spot ->
+                spotQueue.add(spot)
+
+                // start playing spots, if no spot is currently playing
+                if (this@LivestreamPlayService.spotPlayContainer.currentSpot.value == null) {
+                    playNextSpot()
+                }
+            }
+        }
+
         // collect updates of the current play state of the player
         observePlayerState = ioScope.launch {
-            player.current.collect { playState ->
+            livestreamPlayer.current.collect { playState ->
                 when (playState) {
                     is PlayByEarLivestreamPlayer.PlayState.New -> {
                         // initial state of the player, nothing to do.
@@ -378,7 +436,7 @@ class LivestreamPlayService : Service() {
         }
 
         // start the playing process of the livestream
-        if (player.play(streamToken)) {
+        if (livestreamPlayer.play(streamToken)) {
             return START_STICKY
         }
 
@@ -387,11 +445,72 @@ class LivestreamPlayService : Service() {
     }
 
     /**
+     * The playing of a spot finished successfully.
+     */
+    private fun onSpotPlayFinished() {
+        // track the finished play of the spot
+        val currentSpot = spotPlayContainer.currentSpot.value
+        currentSpot?.let {
+            livestreamPlayer.trackSpotPlayFor(it)
+        }
+
+        // start next spot or stop playing spots
+        playNextSpot()
+    }
+
+    /**
+     * Determines whether to start playing the next spot (and muting the livestream)
+     * or to stop playing spots and start playing the livestream again.
+     */
+    private fun playNextSpot() {
+        val spot = spotQueue.poll()
+
+        // are we currently finished playing spots?
+        if (spot == null) {
+            // close notification
+            notificationManager.cancel(SPOT_NOTIFICATION_ID)
+
+            // stop handler of play progress
+            handler.removeCallbacks(updateSpotPlayTimeRunnable)
+
+            // reset spot play container
+            spotPlayContainer.reset()
+
+            // unmute the livestream audio broadcast
+            livestreamPlayer.unmute()
+            return
+        }
+
+        // show notification
+        if (checkPostNotificationPermission()) {
+            val notification = notificationBuilder.createSpotNotification(spot)
+            notificationManager.notify(SPOT_NOTIFICATION_ID, notification)
+        }
+
+        // update spot in spot play container
+        spotPlayContainer.updateSpot(spot)
+
+        // mute livestream audio broadcast
+        livestreamPlayer.mute()
+
+        // start playing spot
+        spotPlayer.apply {
+            reset()
+            setDataSource(spot.audioUrl)
+            prepare()
+            start()
+        }
+
+        // start handler to collect play progress updates from spotPlayer
+        handler.post(updateSpotPlayTimeRunnable)
+    }
+
+    /**
      * The streamer ended the broadcast. We wait a specific time for him to reconnect/start a new stream.
      */
     private fun onStreamerConnectionLost() {
         // stop current play process
-        player.stop()
+        livestreamPlayer.stop()
 
         // show notification indicating connection loss for streamer
         if (checkPostNotificationPermission()) {
@@ -419,7 +538,7 @@ class LivestreamPlayService : Service() {
         notificationManager.cancel(REMOTE_CONNECTION_LOST_NOTIFICATION_ID)
 
         // start playing their new livestream
-        player.play(stream.token)
+        livestreamPlayer.play(stream.token)
     }
 
     /**
@@ -459,6 +578,16 @@ class LivestreamPlayService : Service() {
         }
     }
 
+    /**
+     * Listen for app kill, e.g. by use swipe.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+
+        // Stop the foreground service when the app is swiped away
+        stopService()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
 
@@ -470,8 +599,8 @@ class LivestreamPlayService : Service() {
         unregisterReceiver(intentReceiver)
 
         // ensure playing process is stopped
-        if (::player.isInitialized) {
-            player.stop()
+        if (::livestreamPlayer.isInitialized) {
+            livestreamPlayer.stop()
         }
 
         // change current play state accordingly
@@ -481,9 +610,23 @@ class LivestreamPlayService : Service() {
 
         // cancel all currently active jobs
         observeConnectionState?.cancel()
+        collectSpotsToPlay?.cancel()
         observePlayerState?.cancel()
         observeLivestream?.cancel()
         stopServiceDueToConnectionIssue?.cancel()
+
+        // stop spot play progress handler if not already cleaned up
+        handler.removeCallbacks(updateSpotPlayTimeRunnable)
+
+        // stop spot play if currently running, clean player
+        spotPlayer.apply {
+            if (isPlaying) {
+                stop()
+            }
+
+            reset()
+            release()
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? {

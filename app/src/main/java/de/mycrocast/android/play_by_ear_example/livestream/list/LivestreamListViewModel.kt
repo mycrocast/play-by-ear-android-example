@@ -7,11 +7,13 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import de.mycrocast.android.play_by_ear.sdk.core.domain.PlayByEarLivestream
+import de.mycrocast.android.play_by_ear.sdk.core.domain.PlayByEarSpot
 import de.mycrocast.android.play_by_ear.sdk.livestream.container.domain.PlayByEarLivestreamContainer
 import de.mycrocast.android.play_by_ear.sdk.livestream.loader.domain.PlayByEarLivestreamLoader
 import de.mycrocast.android.play_by_ear_example.livestream.play_state.PlayState
 import de.mycrocast.android.play_by_ear_example.livestream.play_state.PlayStateContainer
 import de.mycrocast.android.play_by_ear_example.livestream.service.LivestreamPlayService
+import de.mycrocast.android.play_by_ear_example.livestream.spot.domain.SpotPlayContainer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -33,6 +35,7 @@ class LivestreamListViewModel @Inject constructor(
     private val loader: PlayByEarLivestreamLoader,
     private val container: PlayByEarLivestreamContainer,
     private val playStateContainer: PlayStateContainer,
+    private val spotPlayContainer: SpotPlayContainer,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -58,20 +61,55 @@ class LivestreamListViewModel @Inject constructor(
         /**
          * Currently active livestreams
          */
-        val livestreams: List<PlayByEarLivestream> = emptyList()
+        val livestreams: List<PlayByEarLivestream> = emptyList(),
+
+        /**
+         * Currently playing spot
+         */
+        val currentPlayingSpot: PlayByEarSpot? = null,
+
+        /**
+         * Current play progress of the current playing spot.
+         * If no spot is playing, this will always be 0.
+         */
+        val currentSpotPlayTime: Int = 0
     )
 
     private val _uiState = MutableStateFlow(UIState())
     val uiState = _uiState.asStateFlow()
 
     init {
-        // collect changes of the currently active livestream groups
+        // collect changes of the currently active livestreams
         viewModelScope.launch {
             container.online.collect { streams ->
                 // update ui state accordingly
                 _uiState.update {
                     it.copy(
                         livestreams = streams
+                    )
+                }
+            }
+        }
+
+        // collect updates on spots to play
+        viewModelScope.launch {
+            spotPlayContainer.currentSpot.collect { spot ->
+                // update ui state accordingly
+                _uiState.update {
+                    it.copy(
+                        currentPlayingSpot = spot
+                    )
+                }
+            }
+        }
+
+        // collect spot play progress
+        viewModelScope.launch {
+            spotPlayContainer.currentPlayTime.collect { time ->
+                // update ui state accordingly
+                _uiState.update {
+                    it.copy(
+                        currentSpotPlayTime = time
                     )
                 }
             }
